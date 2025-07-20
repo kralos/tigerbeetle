@@ -16,7 +16,6 @@ const log = std.log.scoped(.lsm_tree_fuzz);
 const Direction = @import("../direction.zig").Direction;
 const TimeSim = @import("../testing/time.zig").TimeSim;
 const Storage = @import("../testing/storage.zig").Storage;
-const ClusterFaultAtlas = @import("../testing/storage.zig").ClusterFaultAtlas;
 const GridType = @import("../vsr/grid.zig").GridType;
 const NodePool = @import("node_pool.zig").NodePoolType(constants.lsm_manifest_node_size, 16);
 const TableUsage = @import("table.zig").TableUsage;
@@ -924,27 +923,6 @@ pub fn main(gpa: std.mem.Allocator, fuzz_args: fuzz.FuzzArgs) !void {
     const table_usage = prng.enum_uniform(TableUsage);
     log.info("table_usage={}", .{table_usage});
 
-    var storage_fault_atlas = try ClusterFaultAtlas.init(gpa, 3, &prng, .{
-        .faulty_superblock = false,
-        .faulty_wal_headers = false,
-        .faulty_wal_prepares = false,
-        .faulty_client_replies = false,
-        .faulty_grid = true,
-    });
-    defer storage_fault_atlas.deinit(gpa);
-
-    const storage_options: Storage.Options = .{
-        .seed = prng.int(u64),
-        .replica_index = 0,
-        .read_latency_min = .{ .ns = 0 },
-        .read_latency_mean = fuzz.range_inclusive_ms(&prng, 0, 200),
-        .write_latency_min = .{ .ns = 0 },
-        .write_latency_mean = fuzz.range_inclusive_ms(&prng, 0, 200),
-        .read_fault_probability = Ratio.zero(),
-        .write_fault_probability = Ratio.zero(),
-        .fault_atlas = &storage_fault_atlas,
-    };
-
     const block_count_min =
         stdx.div_ceil(constants.lsm_levels, 2) * compaction_block_count_beat_min;
 
@@ -962,11 +940,14 @@ pub fn main(gpa: std.mem.Allocator, fuzz_args: fuzz.FuzzArgs) !void {
     defer gpa.free(fuzz_ops);
 
     // Init mocked storage.
-    var storage = try Storage.init(
-        gpa,
-        constants.storage_size_limit_default,
-        storage_options,
-    );
+    var storage = try fixtures.storage(gpa, .{
+        .size = constants.storage_size_limit_default,
+        .seed = prng.int(u64),
+        .read_latency_min = .{ .ns = 0 },
+        .read_latency_mean = fuzz.range_inclusive_ms(&prng, 0, 200),
+        .write_latency_min = .{ .ns = 0 },
+        .write_latency_mean = fuzz.range_inclusive_ms(&prng, 0, 200),
+    });
     defer storage.deinit(gpa);
 
     switch (table_usage) {
